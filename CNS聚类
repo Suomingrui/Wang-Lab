@@ -1,0 +1,101 @@
+C.sin_CNS<-read.delim('../public_data/arabidopsisAsReference/C.sinensis/C.sinensis.sam',stringsAsFactors=F,sep='\t',header=F)
+
+Gly_CNS<-read.delim('../public_data/arabidopsisAsReference/Glycine_max//glycine.sam',stringsAsFactors=F,sep='\t',header = F)
+
+Pop_CNS<-read.delim('../public_data/arabidopsisAsReference/Populus_trichocarpa/Populus.sam',stringsAsFactors=F,sep='\t',header=F)
+
+library(GenomicRanges)
+
+matcher <- function(pattern, x) {
+  ind = gregexpr(pattern, x)[[1]]
+  start = as.numeric(ind)
+  end = start + attr(ind, "match.length")- 2
+  apply(cbind(start,end), 1, function(y) substr(x, start=y[1], stop=y[2]));
+}
+
+doone <- function(c, cigar) {
+  pat <- paste("\\d+", c , sep="")
+  sum(as.numeric(matcher(pat, cigar)), na.rm=T)
+}
+
+cigarsums <- function(cigar, chars=c("M","N","D","I","S","H", "P", "X", "=")) {
+  sapply (chars, doone, cigar)}
+
+a<-C.sin_CNS[,6]
+b<-Gly_CNS[,6]
+c<-Pop_CNS[,6]
+
+mf1<-as.data.frame(matrix(rep(0,9*length(a)),nrow=length(a)))
+mf2<-as.data.frame(matrix(rep(0,9*length(b)),nrow=length(b)))
+mf3<-as.data.frame(matrix(rep(0,9*length(c)),nrow=length(c)))
+
+for(i in 1:length(a)){mf1[i,]<-cigarsums(a[i])}
+for(i in 1:length(b)){mf2[i,]<-cigarsums(b[i])}
+for(i in 1:length(c)){mf3[i,]<-cigarsums(c[i])}
+
+C.sin_CNS_range<-GRanges(seqnames=gsub(pattern='Chr',replacement='',x=C.sin_CNS$V3),IRanges(start=C.sin_CNS$V4,end=C.sin_CNS$V4+mf1$V1+mf1$V2+mf1$V3+mf1$V8+mf1$V9))
+Gly_CNS_range<-GRanges(seqnames=gsub(pattern='Chr',replacement='',x=Gly_CNS$V3),IRanges(start=Gly_CNS$V4,end=Gly_CNS$V4+mf2$V1+mf2$V2+mf2$V3+mf2$V8+mf2$V9))
+Pop_CNS_range<-GRanges(seqnames=gsub(pattern='Chr',replacement='',x=Pop_CNS$V3),IRanges(start=Pop_CNS$V4,end=Pop_CNS$V4+mf3$V1+mf3$V2+mf3$V3+mf3$V8+mf3$V9))
+C.sin_CNS_range<-reduce(C.sin_CNS_range)
+Gly_CNS_range<-reduce(Gly_CNS_range)
+Pop_CNS_range<-reduce(Pop_CNS_range)
+
+C.sin_Gly_CNS<-intersect(C.sin_CNS_range,Gly_CNS_range)
+C.sin_Pop_CNS<-intersect(C.sin_CNS_range,Pop_CNS_range)
+Gly_Pop_CNS<-intersect(Gly_CNS_range,Pop_CNS_range)
+three_CNS<-intersect(C.sin_Pop_CNS,Gly_CNS_range)
+data1<-as.data.frame(C.sin_Gly_CNS)
+data2<-as.data.frame(C.sin_Pop_CNS)
+data3<-as.data.frame(Gly_Pop_CNS)
+data4<-as.data.frame(three_CNS)
+
+Hit1<-as.data.frame(findOverlaps(C.sin_Gly_CNS,three_CNS))
+Hit2<-as.data.frame(findOverlaps(C.sin_Pop_CNS,three_CNS))
+
+data1<-data1[-Hit1$queryHits,]
+data2<-data2[-Hit2$queryHits,]
+data<-rbind(data1,data2,data3)
+
+CNS<-GRanges(seqnames=data$seqnames,IRanges(start=data$start,end=data$end))
+
+library(BSgenome.Ath.TAIR.10.1.1)
+CNS_seq<-getSeq(Ath,CNS)
+
+matrix<-as.data.frame(matrix(rep(0,887*4096),nrow=4096))
+colnames(matrix)<-paste('CNS',c(1:887),sep='_')
+
+bp<-c(rep(0,134596))
+bp2<-combn(c('A','T','C','G','A','T','C','G','A','T','C','G','A','T','C','G','A','T','C','G','A','T','C','G'),6)
+for (i in 1:134596){bp[i]<-paste(bp2[1,i],bp2[2,i],bp2[3,i],bp2[4,i],bp2[5,i],bp2[6,i],sep='')}
+
+rownames(matrix)<-unique(bp)
+
+CNS_seq_table<-as.data.frame(CNS_seq)
+
+for (i in 1:887){
+  for (j in 1:(length(strsplit(CNS_seq_table[i,],'')[[1]])-5)){
+  if(paste(strsplit(CNS_seq_table[i,],'')[[1]][j:(j+5)],collapse='') %in% rownames(matrix)){
+  matrix[paste(strsplit(CNS_seq_table[i,],'')[[1]][j:(j+5)],collapse=''),i]<-matrix[paste(strsplit(CNS_seq_table[i,],'')[[1]][j:(j+5)],collapse=''),i]+1}}}
+
+set.seed(111)
+k_out_cluster<-kmeans(t(matrix),5)$cluster
+
+library(Rtsne)
+tsne<-Rtsne(t(matrix),perplexity=2,check_duplicates=F)
+tsne<-as.data.frame(tsne$Y)
+
+k_cluster<-as.factor(as.data.frame(k_out_cluster)$k_out_cluster)
+tsne$class<-k_cluster
+
+library(ggpubr)
+ggscatter(tsne,x='V1',y='V2',color='class',ellipse=T)
+
+
+
+
+
+ultraCNS<-read.table('clipboard',sep='\t',header=T)
+ultraCNS<-GRanges(seqnames=ultraCNS$bed_chr,IRanges(start=ultraCNS$bed_start,end=ultraCNS$bed_start))
+ultraCNS_table<-as.data.frame(findOverlaps(CNS,ultraCNS))
+library(ggplot2)
+ggscatter(tsne,x='V1',y='V2',color='class',ellipse=T)+geom_point(data=tsne[c(ultraCNS_table$queryHits),],aes(shape=class))
